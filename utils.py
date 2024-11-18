@@ -8,13 +8,79 @@ import io
 import tempfile
 import os
 import logging
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
+import base64
+import numpy as np
+from collections import Counter
+import pandas as pd
+from datetime import datetime
 
 # Set up logging for better debugging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def generate_chart(df, chart_type, x_column, y_column, title=None):
-    """Generate a Plotly chart based on specifications"""
+def generate_word_cloud(df, text_column, title):
+    """Generate a word cloud from text data"""
+    # Combine all text into one string
+    text = ' '.join(df[text_column].astype(str).fillna(''))
+    
+    # Generate word cloud
+    wordcloud = WordCloud(
+        width=800, 
+        height=400,
+        background_color='white',
+        colormap='viridis',
+        max_words=100
+    ).generate(text)
+    
+    # Create plotly figure
+    img_bytes = io.BytesIO()
+    plt.figure(figsize=(10, 5))
+    plt.imshow(wordcloud, interpolation='bilinear')
+    plt.axis('off')
+    plt.title(title)
+    plt.savefig(img_bytes, format='png', bbox_inches='tight', pad_inches=0)
+    plt.close()
+    
+    # Convert to base64
+    img_bytes.seek(0)
+    img_base64 = base64.b64encode(img_bytes.read()).decode()
+    
+    # Create plotly figure with image
+    fig = go.Figure()
+    fig.add_layout_image(
+        dict(
+            source=f'data:image/png;base64,{img_base64}',
+            x=0,
+            y=1,
+            sizex=1,
+            sizey=1,
+            sizing="stretch",
+            layer="below"
+        )
+    )
+    
+    # Update layout
+    fig.update_layout(
+        title=title,
+        showlegend=False,
+        width=800,
+        height=400,
+        margin=dict(l=0, r=0, t=30, b=0)
+    )
+    
+    # Remove axes
+    fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False)
+    fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False)
+    
+    return fig
+
+def generate_chart(df, chart_type, x_column=None, y_column=None, title=None, text_column=None):
+    """Generate various types of charts based on the specified type"""
+    if chart_type == "word_cloud":
+        return generate_word_cloud(df, text_column, title)
+        
     try:
         if chart_type == "line":
             fig = px.line(df, x=x_column, y=y_column, title=title)
@@ -49,9 +115,9 @@ def generate_chart(df, chart_type, x_column, y_column, title=None):
 def save_chart_as_image(chart):
     """Save Plotly chart as image and return the path"""
     try:
-        # Create a temporary file with a specific name
+        # Create a temporary file with a unique name
         temp_dir = tempfile.gettempdir()
-        temp_path = os.path.join(temp_dir, f'chart_{os.getpid()}.png')
+        temp_path = os.path.join(temp_dir, f'chart_{datetime.now().strftime("%Y%m%d_%H%M%S_%f")}.png')
         
         logger.info(f"Attempting to save chart as image to: {temp_path}")
         
@@ -60,8 +126,8 @@ def save_chart_as_image(chart):
             temp_path,
             format="png",
             engine="kaleido",
-            width=800,
-            height=500,
+            width=1600,  # Increased resolution
+            height=900,   # Increased resolution
             scale=2
         )
         
@@ -123,32 +189,51 @@ def create_presentation(messages):
                 add_text_to_slide(text_slide, "Analysis", is_title=True)
                 add_text_to_slide(text_slide, str(message["content"]))
                 
-                # If there's a chart, add it to a new slide
+                # Handle charts
                 if "chart" in message and message["chart"] is not None:
-                    try:
-                        logger.info("Processing chart for PowerPoint...")
-                        
-                        # Save the chart as an image
-                        chart_image_path = save_chart_as_image(message["chart"])
-                        if chart_image_path:
-                            temp_files.append(chart_image_path)  # Track the temporary file
+                    charts_to_process = []
+                    
+                    # Handle both single charts and lists of charts
+                    if isinstance(message["chart"], list):
+                        charts_to_process.extend(message["chart"])
+                    else:
+                        charts_to_process.append(message["chart"])
+                    
+                    # Process each chart
+                    for chart in charts_to_process:
+                        try:
+                            logger.info("Processing chart for PowerPoint...")
                             
-                            # Create chart slide
-                            chart_slide = prs.slides.add_slide(prs.slide_layouts[6])
-                            add_text_to_slide(chart_slide, "Visualization", is_title=True)
-                            
-                            # Add the chart image
-                            left = Inches(1)
-                            top = Inches(1.5)
-                            width = Inches(8)
-                            chart_slide.shapes.add_picture(chart_image_path, left, top, width=width)
-                            logger.info("Chart successfully added to slide")
-                        else:
-                            logger.error("Failed to save chart as image")
-                            
-                    except Exception as e:
-                        logger.error(f"Error adding chart to slide: {str(e)}")
-                        continue
+                            # Save the chart as an image
+                            chart_image_path = save_chart_as_image(chart)
+                            if chart_image_path:
+                                temp_files.append(chart_image_path)
+                                
+                                # Create chart slide
+                                chart_slide = prs.slides.add_slide(prs.slide_layouts[6])
+                                
+                                # Try to get chart title from layout
+                                chart_title = "Visualization"
+                                try:
+                                    if hasattr(chart, 'layout') and chart.layout.title:
+                                        chart_title = chart.layout.title.text
+                                except:
+                                    pass
+                                
+                                add_text_to_slide(chart_slide, chart_title, is_title=True)
+                                
+                                # Add the chart image
+                                left = Inches(1)
+                                top = Inches(1.5)
+                                width = Inches(8)
+                                chart_slide.shapes.add_picture(chart_image_path, left, top, width=width)
+                                logger.info(f"Chart '{chart_title}' successfully added to slide")
+                            else:
+                                logger.error("Failed to save chart as image")
+                                
+                        except Exception as e:
+                            logger.error(f"Error adding chart to slide: {str(e)}")
+                            continue
         
         # Save the presentation
         temp_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")

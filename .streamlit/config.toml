@@ -1,0 +1,15 @@
+[browser]
+gatherUsageStats = false
+
+[server]
+enableStaticServing = false
+
+[ui]
+hideTopBar = true
+
+[theme]
+base = "light"
+
+[client]
+showErrorDetails = true
+toolbarMode = "minimal" 
